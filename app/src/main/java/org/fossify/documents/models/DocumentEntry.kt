@@ -12,6 +12,7 @@ data class DocumentEntry(
     val lastModified: Long?,
     val lastOpened: Long,
     val lastPage: Int = 0,
+    val lastScrollProgress: Float = 0f,
     val isFavorite: Boolean = false,
 ) {
     fun toJson() = JSONObject().apply {
@@ -23,6 +24,7 @@ data class DocumentEntry(
         put(KEY_LAST_MODIFIED, lastModified)
         put(KEY_LAST_OPENED, lastOpened)
         put(KEY_LAST_PAGE, lastPage)
+        put(KEY_LAST_SCROLL_PROGRESS, lastScrollProgress)
         put(KEY_IS_FAVORITE, isFavorite)
     }
 
@@ -35,6 +37,7 @@ data class DocumentEntry(
         private const val KEY_LAST_MODIFIED = "last_modified"
         private const val KEY_LAST_OPENED = "last_opened"
         private const val KEY_LAST_PAGE = "last_page"
+        private const val KEY_LAST_SCROLL_PROGRESS = "last_scroll_progress"
         private const val KEY_IS_FAVORITE = "is_favorite"
 
         fun fromJson(json: JSONObject): DocumentEntry? {
@@ -56,6 +59,7 @@ data class DocumentEntry(
                     lastModified = json.optNullableLong(KEY_LAST_MODIFIED),
                     lastOpened = json.optLong(KEY_LAST_OPENED, 0L),
                     lastPage = json.optInt(KEY_LAST_PAGE, 0),
+                    lastScrollProgress = json.optDouble(KEY_LAST_SCROLL_PROGRESS, 0.0).toFloat(),
                     isFavorite = json.optBoolean(KEY_IS_FAVORITE, false),
                 )
             }

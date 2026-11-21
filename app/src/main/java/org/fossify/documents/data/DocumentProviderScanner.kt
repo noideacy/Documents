@@ -38,6 +38,7 @@ internal class DocumentProviderScanner(
             lastModified = queried.lastModified ?: previous?.lastModified,
             lastOpened = previous?.lastOpened ?: 0L,
             lastPage = previous?.lastPage ?: 0,
+            lastScrollProgress = previous?.lastScrollProgress ?: 0f,
             isFavorite = previous?.isFavorite ?: false,
         )
     }

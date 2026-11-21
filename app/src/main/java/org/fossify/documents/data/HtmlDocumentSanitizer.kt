@@ -36,6 +36,11 @@ internal object HtmlDocumentSanitizer {
             }
             image.removeAttr("srcset")
         }
+        document.select("table").forEach { table ->
+            if (table.parent()?.hasClass("table-container") != true) {
+                table.wrap("<div class=\"table-container\"></div>")
+            }
+        }
         document.outputSettings()
             .prettyPrint(false)
             .syntax(Document.OutputSettings.Syntax.html)

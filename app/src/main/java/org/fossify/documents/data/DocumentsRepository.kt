@@ -43,6 +43,7 @@ class DocumentsRepository(
             val updated = metadata.copy(
                 lastOpened = System.currentTimeMillis(),
                 lastPage = previous?.lastPage ?: metadata.lastPage,
+                lastScrollProgress = previous?.lastScrollProgress ?: metadata.lastScrollProgress,
                 isFavorite = previous?.isFavorite ?: metadata.isFavorite,
             )
             remembered = updated
@@ -58,6 +59,7 @@ class DocumentsRepository(
             val updated = scanner.readDocument(uri, previous).copy(
                 lastOpened = previous.lastOpened,
                 lastPage = previous.lastPage,
+                lastScrollProgress = previous.lastScrollProgress,
                 isFavorite = previous.isFavorite,
             )
             refreshed = updated
@@ -94,6 +96,18 @@ class DocumentsRepository(
         store.updateDocuments { documents ->
             documents.map { entry ->
                 if (entry.uri == uri.toString()) entry.copy(lastPage = page.coerceAtLeast(0)) else entry
+            }
+        }
+    }
+
+    fun updateLastScrollProgress(uri: Uri, progress: Float) {
+        store.updateDocuments { documents ->
+            documents.map { entry ->
+                if (entry.uri == uri.toString()) {
+                    entry.copy(lastScrollProgress = progress.coerceIn(0f, 1f))
+                } else {
+                    entry
+                }
             }
         }
     }

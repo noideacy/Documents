@@ -43,5 +43,6 @@ class HtmlDocumentSanitizerTest {
         assertEquals("Title", document.selectFirst("h1")!!.text())
         assertEquals("Bold", document.selectFirst("strong")!!.text())
         assertEquals("B", document.selectFirst("td")!!.text())
+        assertTrue(document.selectFirst("table")!!.parent()!!.hasClass("table-container"))
     }
 }

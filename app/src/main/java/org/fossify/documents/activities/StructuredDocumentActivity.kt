@@ -9,10 +9,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import org.fossify.commons.activities.BaseComposeActivity
 import org.fossify.commons.compose.extensions.enableEdgeToEdgeSimple
@@ -22,9 +27,12 @@ import org.fossify.commons.extensions.showErrorToast
 import org.fossify.commons.extensions.toast
 import org.fossify.documents.data.DocumentsRepository
 import org.fossify.documents.data.isAllowedExternalDocumentLink
+import org.fossify.documents.extensions.config
 import org.fossify.documents.extensions.shareDocuments
 import org.fossify.documents.models.DocumentKind
+import org.fossify.documents.ui.screens.DEFAULT_DOCUMENT_TEXT_ZOOM
 import org.fossify.documents.ui.screens.StructuredDocumentScreen
+import org.fossify.documents.ui.screens.coerceDocumentTextZoom
 import org.fossify.documents.ui.theme.DocumentsAppThemeSurface
 import org.fossify.documents.viewmodels.StructuredDocumentViewModel
 
@@ -49,9 +57,20 @@ class StructuredDocumentActivity : BaseComposeActivity() {
             return
         }
 
+        val repository = DocumentsRepository(this)
+        val existingDocument = repository.getDocument(uri)
+        val initialScrollProgress = existingDocument?.lastScrollProgress ?: 0f
+
+        val scrollUpdates = Channel<Float>(Channel.CONFLATED)
+        lifecycleScope.launch(Dispatchers.IO) {
+            for (progress in scrollUpdates) {
+                repository.updateLastScrollProgress(uri, progress)
+            }
+        }
+
         if (!intent.getBooleanExtra(EXTRA_DOCUMENT_PREPARED, false)) {
             lifecycleScope.launch(Dispatchers.IO) {
-                DocumentsRepository(this@StructuredDocumentActivity).rememberDocument(uri, intent.flags)
+                repository.rememberDocument(uri, intent.flags)
             }
         }
 
@@ -59,6 +78,10 @@ class StructuredDocumentActivity : BaseComposeActivity() {
         setContent {
             DocumentsAppThemeSurface {
                 val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
+                var textZoom by remember {
+                    mutableFloatStateOf(config.editorTextZoom.coerceDocumentTextZoom())
+                }
+
                 LaunchedEffect(uri, kind) {
                     viewModel.load(uri, kind)
                 }
@@ -69,6 +92,20 @@ class StructuredDocumentActivity : BaseComposeActivity() {
                 }
                 StructuredDocumentScreen(
                     uiState = uiState,
+                    initialScrollProgress = initialScrollProgress,
+                    onScrollProgressChange = { progress ->
+                        scrollUpdates.trySend(progress)
+                    },
+                    textZoom = textZoom,
+                    onTextZoomChange = { requestedZoom ->
+                        val zoom = requestedZoom.coerceDocumentTextZoom()
+                        textZoom = zoom
+                        config.editorTextZoom = zoom
+                    },
+                    onResetTextZoom = {
+                        textZoom = DEFAULT_DOCUMENT_TEXT_ZOOM
+                        config.editorTextZoom = DEFAULT_DOCUMENT_TEXT_ZOOM
+                    },
                     onBack = ::finish,
                     onEdit = if (uiState.canEdit) {
                         {

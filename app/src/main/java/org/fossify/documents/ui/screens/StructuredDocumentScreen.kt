@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -36,9 +37,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -84,6 +88,11 @@ import android.graphics.Color as AndroidColor
 @Composable
 internal fun StructuredDocumentScreen(
     uiState: StructuredDocumentUiState,
+    initialScrollProgress: Float = 0f,
+    onScrollProgressChange: (Float) -> Unit = {},
+    textZoom: Float = DEFAULT_DOCUMENT_TEXT_ZOOM,
+    onTextZoomChange: (Float) -> Unit = {},
+    onResetTextZoom: () -> Unit = {},
     onBack: () -> Unit,
     onEdit: (() -> Unit)?,
     onOpenWith: () -> Unit,
@@ -118,6 +127,10 @@ internal fun StructuredDocumentScreen(
                 onEdit = onEdit,
                 onOpenWith = onOpenWith,
                 onShare = onShare,
+                showZoomControls = uiState.content is StructuredDocumentContent.Web && !uiState.isLoading,
+                textZoom = textZoom,
+                onTextZoomChange = onTextZoomChange,
+                onResetTextZoom = onResetTextZoom,
                 scrolledColor = scrolledColor,
                 scrollBehavior = scrollBehavior,
                 statusBarColor = statusBarColor,
@@ -138,6 +151,9 @@ internal fun StructuredDocumentScreen(
                 uiState.content is StructuredDocumentContent.Web -> WebDocument(
                     content = uiState.content,
                     search = search,
+                    initialScrollProgress = initialScrollProgress,
+                    onScrollProgressChange = onScrollProgressChange,
+                    textZoom = textZoom,
                     onOpenLink = onOpenLink,
                 )
 
@@ -161,6 +177,10 @@ private fun StructuredDocumentTopBar(
     onEdit: (() -> Unit)?,
     onOpenWith: () -> Unit,
     onShare: () -> Unit,
+    showZoomControls: Boolean = false,
+    textZoom: Float = DEFAULT_DOCUMENT_TEXT_ZOOM,
+    onTextZoomChange: (Float) -> Unit = {},
+    onResetTextZoom: () -> Unit = {},
     scrolledColor: Color,
     scrollBehavior: TopAppBarScrollBehavior,
     statusBarColor: Int,
@@ -237,6 +257,47 @@ private fun StructuredDocumentTopBar(
                         tint = scrolledColor,
                     )
                 }
+                if (showZoomControls) {
+                    var menuExpanded by remember { mutableStateOf(false) }
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = stringResource(id = org.fossify.commons.R.string.more_options),
+                            tint = scrolledColor,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                        modifier = Modifier.widthIn(min = DocumentsMenuMinWidth),
+                        offset = DocumentsEndMenuOffset,
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(id = R.string.zoom_in)) },
+                            enabled = textZoom < MAX_DOCUMENT_TEXT_ZOOM,
+                            onClick = {
+                                menuExpanded = false
+                                onTextZoomChange((textZoom + DOCUMENT_TEXT_ZOOM_STEP).coerceDocumentTextZoom())
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(id = R.string.zoom_out)) },
+                            enabled = textZoom > MIN_DOCUMENT_TEXT_ZOOM,
+                            onClick = {
+                                menuExpanded = false
+                                onTextZoomChange((textZoom - DOCUMENT_TEXT_ZOOM_STEP).coerceDocumentTextZoom())
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(id = R.string.reset_zoom)) },
+                            enabled = textZoom != DEFAULT_DOCUMENT_TEXT_ZOOM,
+                            onClick = {
+                                menuExpanded = false
+                                onResetTextZoom()
+                            },
+                        )
+                    }
+                }
             }
         },
         scrollBehavior = scrollBehavior,
@@ -251,10 +312,15 @@ private fun StructuredDocumentTopBar(
 private fun WebDocument(
     content: StructuredDocumentContent.Web,
     search: WebDocumentSearchState,
+    initialScrollProgress: Float = 0f,
+    onScrollProgressChange: (Float) -> Unit = {},
+    textZoom: Float = DEFAULT_DOCUMENT_TEXT_ZOOM,
     onOpenLink: (Uri) -> Unit,
 ) {
     val context = LocalContext.current
     val currentOnOpenLink by rememberUpdatedState(onOpenLink)
+    val currentInitialScrollProgress by rememberUpdatedState(initialScrollProgress)
+    val currentOnScrollProgressChange by rememberUpdatedState(onScrollProgressChange)
     val backgroundColor = SimpleTheme.colorScheme.surface
     val textColor = SimpleTheme.colorScheme.onSurface
     val accentColor = SimpleTheme.colorScheme.primary
@@ -302,9 +368,29 @@ private fun WebDocument(
             settings.setSupportZoom(true)
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
+
+            setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                val totalScrollable = (contentHeight * scale - height).toInt()
+                if (totalScrollable > 0) {
+                    val progress = (scrollY.toFloat() / totalScrollable).coerceIn(0f, 1f)
+                    currentOnScrollProgressChange(progress)
+                }
+            }
+
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     search.pageFinished()
+                    val targetProgress = currentInitialScrollProgress
+                    if (targetProgress > 0f) {
+                        val restore = Runnable {
+                            val totalScrollable = (view.contentHeight * view.scale - view.height).toInt()
+                            if (totalScrollable > 0) {
+                                view.scrollTo(0, (totalScrollable * targetProgress).toInt())
+                            }
+                        }
+                        view.post(restore)
+                        view.postDelayed(restore, 150)
+                    }
                 }
 
                 override fun shouldInterceptRequest(
@@ -339,10 +425,18 @@ private fun WebDocument(
     DisposableEffect(webView) {
         search.attach(webView)
         onDispose {
+            val totalScrollable = (webView.contentHeight * webView.scale - webView.height).toInt()
+            if (totalScrollable > 0) {
+                val progress = (webView.scrollY.toFloat() / totalScrollable).coerceIn(0f, 1f)
+                currentOnScrollProgressChange(progress)
+            }
             search.detach()
             webView.stopLoading()
             webView.destroy()
         }
+    }
+    LaunchedEffect(webView, (textZoom * 100).toInt()) {
+        webView.settings.textZoom = (textZoom * 100).toInt()
     }
     LaunchedEffect(webView, page) {
         search.pageStarted()
@@ -468,7 +562,7 @@ private fun buildWebPage(
         """.trimIndent()
     }.orEmpty()
     val injectedHead = """
-        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=3.0, user-scalable=yes">
         <style>
             $customFontFace
             :root { color-scheme: light dark; }
@@ -498,8 +592,26 @@ private fun buildWebPage(
             }
             a { color: ${accentColor.cssColor()}; }
             img { max-width: 100%; height: auto; }
-            table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
-            th, td { padding: 8px 10px; border: 1px solid ${outlineColor.cssColor()}; text-align: start; }
+            .table-container {
+                width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                margin: 16px 0;
+            }
+            .table-container > table, table {
+                display: table;
+                width: max-content;
+                min-width: 100%;
+                border-collapse: collapse;
+            }
+            th, td {
+                padding: 8px 12px;
+                border: 1px solid ${outlineColor.cssColor()};
+                text-align: start;
+                white-space: normal;
+                overflow-wrap: normal;
+                word-break: normal;
+            }
             blockquote { margin-inline: 0; padding-inline-start: 14px; border-inline-start: 3px solid ${accentColor.cssColor()}; }
             pre { overflow-x: auto; padding: 12px; background: ${codeColor.cssColor()}; border-radius: 6px; }
             code { font-family: monospace; }
