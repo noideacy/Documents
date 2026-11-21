@@ -5,6 +5,9 @@ on:
     branches: [ main, docx-improvements ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,8 +27,18 @@ jobs:
       - name: Build APK
         run: ./gradlew assembleFossDebug --stacktrace
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Prepare APK file
+        run: |
+          mkdir -p release-asset
+          cp app/build/outputs/apk/foss/debug/*.apk release-asset/Fossify-Documents.apk
+
+      - name: Publish Direct APK Download
+        uses: softprops/action-gh-release@v2
         with:
-          name: fossify-documents-debug-apk
-          path: app/build/outputs/apk/foss/debug/*.apk
+          tag_name: latest
+          name: Fossify Documents (with DOCX improvements)
+          draft: false
+          prerelease: false
+          files: release-asset/Fossify-Documents.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
