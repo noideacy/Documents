@@ -25,11 +25,95 @@ internal class StructuredDocumentLoader(
         val html = openInput(uri).use { input ->
             DocumentConverter().convertToHtml(input).value
         }
+        val embeddedFont = extractDocxEmbeddedFont(uri)
         return StructuredDocumentLoadResult(
             content = StructuredDocumentContent.Web(
                 html = HtmlDocumentSanitizer.sanitize(html, isFragment = true),
+                embeddedFont = embeddedFont,
             ),
         )
+    }
+
+    private fun extractDocxEmbeddedFont(uri: Uri): EmbeddedDocFont? {
+        return runCatching {
+            var fontBytes: ByteArray? = null
+            var fontEntryName: String? = null
+            var fontTableXml: String? = null
+
+            openInput(uri).use { stream ->
+                ZipInputStream(stream.buffered()).use { zip ->
+                    while (true) {
+                        val entry = zip.nextEntry ?: break
+                        val lowerName = entry.name.lowercase()
+                        if (lowerName.startsWith("word/fonts/") &&
+                            (lowerName.endsWith(".ttf") || lowerName.endsWith(".otf") || lowerName.endsWith(".odttf"))
+                        ) {
+                            fontBytes = zip.readBytes()
+                            fontEntryName = entry.name
+                        } else if (lowerName.endsWith("word/fonttable.xml")) {
+                            fontTableXml = zip.reader(Charsets.UTF_8).readText()
+                        }
+                        zip.closeEntry()
+                    }
+                }
+            }
+
+            val rawBytes = fontBytes ?: return null
+            if (rawBytes.isEmpty()) return null
+
+            val entryName = fontEntryName.orEmpty()
+            val fontNameMatch = fontTableXml?.let {
+                Regex("""<w:font\s+[^>]*w:name="([^"]+)"""").find(it)?.groupValues?.get(1)
+            }
+            val familyName = fontNameMatch ?: "EmbeddedDocxFont"
+
+            if (entryName.endsWith(".odttf", ignoreCase = true)) {
+                val guidMatch = fontTableXml?.let {
+                    Regex("""w:fontKey="\{?([0-9a-fA-F\-]+)\}?"""").find(it)?.groupValues?.get(1)
+                } ?: entryName.substringAfterLast('/').substringBeforeLast('.')
+                val deobfuscated = deobfuscateOdttf(rawBytes, guidMatch)
+                EmbeddedDocFont(
+                    bytes = deobfuscated,
+                    mimeType = "font/ttf",
+                    format = "truetype",
+                    familyName = familyName,
+                )
+            } else if (entryName.endsWith(".otf", ignoreCase = true)) {
+                EmbeddedDocFont(
+                    bytes = rawBytes,
+                    mimeType = "font/otf",
+                    format = "opentype",
+                    familyName = familyName,
+                )
+            } else {
+                EmbeddedDocFont(
+                    bytes = rawBytes,
+                    mimeType = "font/ttf",
+                    format = "truetype",
+                    familyName = familyName,
+                )
+            }
+        }.getOrNull()
+    }
+
+    private fun deobfuscateOdttf(bytes: ByteArray, guidStr: String): ByteArray {
+        val hex = guidStr.replace("{", "").replace("}", "").replace("-", "")
+        if (hex.length != 32) return bytes
+        val rawKey = ByteArray(16) { i ->
+            hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
+        val guidKey = ByteArray(16)
+        guidKey[0] = rawKey[3]; guidKey[1] = rawKey[2]; guidKey[2] = rawKey[1]; guidKey[3] = rawKey[0]
+        guidKey[4] = rawKey[5]; guidKey[5] = rawKey[4]
+        guidKey[6] = rawKey[7]; guidKey[7] = rawKey[6]
+        System.arraycopy(rawKey, 8, guidKey, 8, 8)
+
+        val out = bytes.copyOf()
+        val limit = minOf(32, out.size)
+        for (i in 0 until limit) {
+            out[i] = (out[i].toInt() xor guidKey[i % 16].toInt()).toByte()
+        }
+        return out
     }
 
     private fun loadCsv(uri: Uri, fileName: String): StructuredDocumentLoadResult {

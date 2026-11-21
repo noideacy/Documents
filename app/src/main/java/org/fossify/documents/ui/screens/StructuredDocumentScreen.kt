@@ -79,6 +79,7 @@ import org.fossify.commons.helpers.FONT_TYPE_CUSTOM
 import org.fossify.commons.helpers.FONT_TYPE_MONOSPACE
 import org.fossify.commons.helpers.FontHelper
 import org.fossify.documents.R
+import org.fossify.documents.data.EmbeddedDocFont
 import org.fossify.documents.data.StructuredDocumentContent
 import org.fossify.documents.viewmodels.StructuredDocumentUiState
 import java.io.File
@@ -334,6 +335,7 @@ private fun WebDocument(
     }
     val page = remember(
         content.html,
+        content.embeddedFont,
         backgroundColor,
         textColor,
         accentColor,
@@ -344,6 +346,7 @@ private fun WebDocument(
     ) {
         buildWebPage(
             html = content.html,
+            embeddedFont = content.embeddedFont,
             backgroundColor = backgroundColor,
             textColor = textColor,
             accentColor = accentColor,
@@ -397,17 +400,29 @@ private fun WebDocument(
                     view: WebView,
                     request: WebResourceRequest,
                 ): WebResourceResponse? {
-                    if (request.url.toString() != WEB_FONT_URL) {
-                        return super.shouldInterceptRequest(view, request)
+                    val requestUrl = request.url.toString()
+                    if (requestUrl == WEB_FONT_URL) {
+                        return try {
+                            webFont.file?.inputStream()?.let { input ->
+                                WebResourceResponse(webFont.mimeType, null, input)
+                            }
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+                    if (requestUrl == EMBEDDED_FONT_URL && content.embeddedFont != null) {
+                        return try {
+                            WebResourceResponse(
+                                content.embeddedFont.mimeType,
+                                null,
+                                content.embeddedFont.bytes.inputStream(),
+                            )
+                        } catch (_: Exception) {
+                            null
+                        }
                     }
 
-                    return try {
-                        webFont.file?.inputStream()?.let { input ->
-                            WebResourceResponse(webFont.mimeType, null, input)
-                        }
-                    } catch (_: Exception) {
-                        null
-                    }
+                    return super.shouldInterceptRequest(view, request)
                 }
 
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -544,6 +559,7 @@ private fun calculateColumnWidths(content: StructuredDocumentContent.Table): Lis
 
 private fun buildWebPage(
     html: String,
+    embeddedFont: EmbeddedDocFont? = null,
     backgroundColor: Color,
     textColor: Color,
     accentColor: Color,
@@ -552,15 +568,30 @@ private fun buildWebPage(
     searchColors: DocumentSearchColors,
     webFont: WebDocumentFont,
 ): String {
-    val customFontFace = webFont.file?.let {
-        """
+    val customFontFace = when {
+        webFont.file != null -> """
             @font-face {
                 font-family: "FossifyReaderFont";
                 src: url("$WEB_FONT_URL") format("${webFont.format}");
                 font-display: swap;
             }
         """.trimIndent()
-    }.orEmpty()
+        embeddedFont != null -> """
+            @font-face {
+                font-family: "${embeddedFont.familyName}";
+                src: url("$EMBEDDED_FONT_URL") format("${embeddedFont.format}");
+                font-display: swap;
+            }
+        """.trimIndent()
+        else -> ""
+    }
+
+    val docFontFamily = when {
+        webFont.file != null -> webFont.cssFamily
+        embeddedFont != null -> "\"${embeddedFont.familyName}\", serif, sans-serif"
+        else -> "serif, sans-serif"
+    }
+
     val injectedHead = """
         <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=3.0, user-scalable=yes">
         <style>
@@ -568,7 +599,7 @@ private fun buildWebPage(
             :root { color-scheme: light dark; }
             html {
                 background: ${backgroundColor.cssColor()};
-                font-family: ${webFont.cssFamily};
+                font-family: $docFontFamily;
             }
             body {
                 box-sizing: border-box;
@@ -578,6 +609,7 @@ private fun buildWebPage(
                 padding: 20px;
                 background: ${backgroundColor.cssColor()};
                 color: ${textColor.cssColor()};
+                font-family: $docFontFamily;
                 font-size: 16px;
                 line-height: 1.55;
                 overflow-wrap: anywhere;
@@ -600,16 +632,15 @@ private fun buildWebPage(
             }
             .table-container > table, table {
                 display: table;
-                width: max-content;
-                min-width: 100%;
+                width: 100%;
                 border-collapse: collapse;
             }
             th, td {
-                padding: 8px 12px;
+                padding: 8px 10px;
                 border: 1px solid ${outlineColor.cssColor()};
                 text-align: start;
-                white-space: normal;
-                overflow-wrap: normal;
+                vertical-align: top;
+                overflow-wrap: break-word;
                 word-break: normal;
             }
             blockquote { margin-inline: 0; padding-inline-start: 14px; border-inline-start: 3px solid ${accentColor.cssColor()}; }
@@ -665,3 +696,4 @@ private data class WebDocumentFont(
 private const val WEB_BASE_HOST = "documents.fossify.local"
 private const val WEB_BASE_URL = "https://$WEB_BASE_HOST/"
 private const val WEB_FONT_URL = "${WEB_BASE_URL}reader-font"
+private const val EMBEDDED_FONT_URL = "${WEB_BASE_URL}embedded-docx-font"
